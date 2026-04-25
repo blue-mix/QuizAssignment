@@ -58,6 +58,7 @@ fun Quiz.toEntity(): QuizEntity = QuizEntity(
  * Convenience extension to map an entire list in one call.
  * Avoids `entities.map { it.toDomain() }` boilerplate at every call-site.
  */
+@JvmName("quizListToDomain")
 fun List<QuizEntity>.toDomain(): List<Quiz> = map { it.toDomain() }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -96,4 +97,5 @@ fun Question.toEntity(): QuestionEntity = QuestionEntity(
 /**
  * Convenience extension to map an entire list in one call.
  */
+@JvmName("questionListToDomain")
 fun List<QuestionEntity>.toDomain(): List<Question> = map { it.toDomain() }

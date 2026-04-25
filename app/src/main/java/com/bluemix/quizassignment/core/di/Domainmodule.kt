@@ -1,53 +1,46 @@
 package com.bluemix.quizassignment.core.di
 
 import com.bluemix.quizassignment.domain.usecase.GetAvailableQuizzesUseCase
+import com.bluemix.quizassignment.domain.usecase.GetQuizByIdUseCase
 import com.bluemix.quizassignment.domain.usecase.GetQuizQuestionsUseCase
 import org.koin.dsl.module
 
 /**
  * Koin module: provides all Domain layer Use Cases.
  *
- * ── `factory` vs `single` for Use Cases ──────────────────────────────────────
- * Use Cases are declared as `factory` (a new instance per injection) for two
- * reasons:
+ * ── `factory` vs `single` ─────────────────────────────────────────────────────
+ * Use Cases are stateless function objects — `factory` is correct.
+ * A new instance per injection site costs negligible memory and prevents
+ * any accidental shared-state between ViewModels during integration tests.
  *
- *  1. **Purity** — A Use Case is a stateless function object. Sharing a single
- *     instance across ViewModels offers no benefit over creating a fresh one.
- *
- *  2. **Testability** — `factory` prevents one ViewModel's test from
- *     accidentally sharing state with another's when both are live in the
- *     same Koin context during integration tests.
- *
- * If a Use Case ever accumulates state (e.g., an in-memory cache), promote it
- * to `single` at that point — not preemptively.
- *
- * ── Layer isolation ───────────────────────────────────────────────────────────
- * This module only imports Domain layer classes. It never imports anything from
- * `com.grammarflow.data.*`. The [QuizRepository] it resolves via `get()` is
- * the domain interface — Koin satisfies it with [QuizRepositoryImpl] as wired
- * in [repositoryModule], but this module has zero knowledge of that.
+ * ── Isolation guarantee ───────────────────────────────────────────────────────
+ * This module imports only from `com.grammarflow.domain.*`. It has zero
+ * knowledge of `com.grammarflow.data.*`. The [QuizRepository] resolved via
+ * `get()` is the domain interface — Koin provides the impl from repositoryModule.
  */
 val domainModule = module {
 
     /**
-     * Provides a new [GetAvailableQuizzesUseCase] per injection site.
-     *
-     * Resolved via: domainModule → repositoryModule → databaseModule (QuizDao)
+     * Returns all available quizzes as a one-shot list.
+     * Consumed by [HomeViewModel] and internally by [GetQuizByIdUseCase].
      */
     factory {
-        GetAvailableQuizzesUseCase(
-            repository = get(),  // QuizRepository interface
-        )
+        GetAvailableQuizzesUseCase(repository = get())
     }
 
     /**
-     * Provides a new [GetQuizQuestionsUseCase] per injection site.
-     *
-     * Resolved via: domainModule → repositoryModule → databaseModule (QuizDao)
+     * Resolves a single quiz by primary key.
+     * Consumed by [com.grammarflow.presentation.detail.QuizDetailViewModel].
      */
     factory {
-        GetQuizQuestionsUseCase(
-            repository = get(),  // QuizRepository interface
-        )
+        GetQuizByIdUseCase(repository = get())
+    }
+
+    /**
+     * Returns a reactive Flow of questions for a given quizId.
+     * Consumed by [com.grammarflow.presentation.quiz.QuizEngineViewModel].
+     */
+    factory {
+        GetQuizQuestionsUseCase(repository = get())
     }
 }
