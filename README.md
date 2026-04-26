@@ -3,19 +3,25 @@
 A lightweight, offline-first Android application for English grammar practice through timed, persistent multiple-choice quizzes. The application operates entirely without a network connection; all content is seeded locally into a Room database on first launch.
 
 **Watch the Full Technical Walkthrough:**
+
 [![GrammarFlow Demo](https://img.youtube.com/vi/lJ3xhXYaJoc/maxresdefault.jpg)](https://www.youtube.com/watch?v=lJ3xhXYaJoc)
+
 ---
+
 ## Screenshots
 
-| Home Dashboard | Quiz Detail | Quiz Engine |                     Results                     |
-| :---: | :---: | :---: |:-----------------------------------------------:|
+| Home Dashboard | Quiz Detail | Quiz Engine | Results |
+| :---: | :---: | :---: | :---: |
 | <img src="screenshots/home.png" width="220"/> | <img src="screenshots/detail.png" width="220"/> | <img src="screenshots/engine.png" width="220"/> | <img src="screenshots/result.png" width="220"/> |
+
+---
+
 ## Tech Stack
 
 * **UI Toolkit:** Jetpack Compose with Lumo UI (high-contrast OLED backgrounds, squircle geometry).
 * **Architecture:** Strict Clean Architecture (Domain, Data, Presentation), MVVM, and Unidirectional Data Flow (UDF).
 * **Dependency Injection:** Koin 3.5+ (chosen over Hilt for zero annotation-processing overhead).
-* **Persistence:** Room Database mapped with Kotlin Coroutines and kotlinx.serialization.
+* **Persistence:** Room Database with async access via Kotlin Coroutines and `List<String>` serialization via kotlinx.serialization.
 * **Routing:** Type-Safe Navigation Compose (Navigation 2.8+).
 
 ---
