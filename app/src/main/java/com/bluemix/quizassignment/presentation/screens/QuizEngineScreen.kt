@@ -49,19 +49,442 @@ import ui.components.card.CardDefaults
 import ui.components.card.OutlinedCard
 import ui.components.progressindicators.CircularProgressIndicator
 import ui.components.progressindicators.LinearProgressIndicator
+//
+//// Auto-advance delay after answer reveal (ms)
+//private const val AUTO_ADVANCE_DELAY_MS = 1_200L
+//
+///**
+// * Entry-point composable for the Quiz Engine screen.
+// *
+// * @param quizId             Sourced from the type-safe navigation route.
+// * @param totalTimeInMinutes Sourced from the quiz domain model; passed
+// *                           to [QuizEngineViewModel] via Koin [parametersOf].
+// * @param onQuizFinished     Called when [QuizUiState.Finished] is emitted.
+// *                           The NavHost navigates to [Screen.Results].
+// */
+//@Composable
+//fun QuizEngineScreen(
+//    quizId: Long,
+//    totalTimeInMinutes: Int,
+//    onQuizFinished: (score: Int, total: Int) -> Unit,
+//    viewModel: QuizEngineViewModel = koinViewModel(
+//        parameters = { parametersOf(quizId, totalTimeInMinutes) }
+//    ),
+//) {
+//    val state by viewModel.uiState.collectAsStateWithLifecycle()
+//
+//    // Observe Finished state once and navigate
+//    LaunchedEffect(state) {
+//        if (state is QuizUiState.Finished) {
+//            val finished = state as QuizUiState.Finished
+//            onQuizFinished(finished.score, finished.total)
+//        }
+//    }
+//
+//    QuizEngineContent(
+//        state   = state,
+//        onEvent = viewModel::onEvent,
+//    )
+//}
+//
+//// ─────────────────────────────────────────────────────────────────────────────
+//// Stateless Content
+//// ─────────────────────────────────────────────────────────────────────────────
+//
+//@Composable
+//private fun QuizEngineContent(
+//    state: QuizUiState,
+//    onEvent: (QuizEvent) -> Unit,
+//) {
+//    Box(
+//        modifier = Modifier
+//            .fillMaxSize()
+//            .background(ColorBackground),
+//    ) {
+//        when (state) {
+//            QuizUiState.Loading   -> QuizLoadingState()
+//            is QuizUiState.Error  -> QuizErrorState(state.message)
+//            is QuizUiState.Active -> QuizActiveState(state = state, onEvent = onEvent)
+//            // Finished → handled via LaunchedEffect navigation; show nothing here
+//            is QuizUiState.Finished -> QuizLoadingState()
+//        }
+//    }
+//}
+//
+//// ── Active quiz state ─────────────────────────────────────────────────────────
+//
+//@Composable
+//private fun QuizActiveState(
+//    state: QuizUiState.Active,
+//    onEvent: (QuizEvent) -> Unit,
+//) {
+//    val haptic = LocalHapticFeedback.current
+//    val isLastQuestion = state.currentIndex == state.totalQuestions - 1
+//
+//    // Auto-advance to next question after answer is revealed
+//    LaunchedEffect(state.selectedOptionIndex) {
+//        if (state.isAnswerRevealed && !isLastQuestion) {
+//            delay(AUTO_ADVANCE_DELAY_MS)
+//            onEvent(QuizEvent.NextQuestion)
+//        }
+//    }
+//
+//    Column(
+//        modifier = Modifier
+//            .fillMaxSize()
+//            .statusBarsPadding()
+//            .navigationBarsPadding(),
+//    ) {
+//        // ── Top bar: progress + timer ─────────────────────────────────────────
+//        QuizTopBar(state = state)
+//
+//        // ── Scrollable question + options ─────────────────────────────────────
+//        Column(
+//            modifier = Modifier
+//                .weight(1f)
+//                .verticalScroll(rememberScrollState())
+//                .padding(horizontal = 24.dp),
+//        ) {
+//            Spacer(Modifier.height(24.dp))
+//            QuestionSection(
+//                currentIndex  = state.currentIndex,
+//                totalQuestions = state.totalQuestions,
+//                questionText  = state.currentQuestion.questionText,
+//            )
+//            Spacer(Modifier.height(28.dp))
+//            OptionsSection(
+//                question           = state.currentQuestion,
+//                selectedOptionIndex = state.selectedOptionIndex,
+//                isAnswerRevealed   = state.isAnswerRevealed,
+//                onOptionSelected   = { index ->
+//                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+//                    onEvent(QuizEvent.OptionSelected(index))
+//                },
+//            )
+//            Spacer(Modifier.height(24.dp))
+//        }
+//
+//        // ── Bottom action ─────────────────────────────────────────────────────
+//        if (state.isAnswerRevealed && isLastQuestion) {
+//            Box(
+//                modifier = Modifier
+//                    .fillMaxWidth()
+//                    .background(ColorBackground)
+//                    .padding(horizontal = 24.dp, vertical = 16.dp),
+//            ) {
+//                Button(
+//                    modifier = Modifier.fillMaxWidth(),
+//                    text     = "See Results",
+//                    variant  = ButtonVariant.Primary,
+//                    onClick  = { onEvent(QuizEvent.SubmitQuiz) },
+//                )
+//            }
+//        }
+//    }
+//}
+//
+//// ── Top bar ───────────────────────────────────────────────────────────────────
+//
+//@Composable
+//private fun QuizTopBar(state: QuizUiState.Active) {
+//    Column(
+//        modifier = Modifier
+//            .fillMaxWidth()
+//            .background(ColorBackground)
+//            .padding(horizontal = 24.dp, vertical = 16.dp),
+//    ) {
+//        Row(
+//            modifier              = Modifier.fillMaxWidth(),
+//            horizontalArrangement = Arrangement.SpaceBetween,
+//            verticalAlignment     = Alignment.CenterVertically,
+//        ) {
+//            // Question counter
+//            Text(
+//                text  = "${state.currentIndex + 1} / ${state.totalQuestions}",
+//                color = ColorTextSecondary,
+//                style = AppTheme.typography.body2.copy(
+//                    fontWeight    = FontWeight.Bold,
+//                    fontSize      = 13.sp,
+//                    letterSpacing = 0.5.sp,
+//                ),
+//            )
+//
+//            // Countdown timer
+//            TimerBadge(
+//                timeRemainingSeconds = state.timeRemainingSeconds,
+//                timerFraction        = state.timerFraction,
+//            )
+//        }
+//
+//        Spacer(Modifier.height(12.dp))
+//
+//        // Lumo LinearProgressIndicator for question progress
+//        LinearProgressIndicator(
+//            progress   = state.progressFraction,
+//            modifier   = Modifier
+//                .fillMaxWidth()
+//                .height(4.dp)
+//                .clip(RoundedCornerShape(50)),
+//            color      = ColorAccent,
+//            trackColor = ColorSurfaceHigh,
+//        )
+//    }
+//}
+//
+//@Composable
+//private fun TimerBadge(
+//    timeRemainingSeconds: Int,
+//    timerFraction: Float,
+//) {
+//    // Color shifts from green → accent → red as time depletes
+//    val timerColor by animateColorAsState(
+//        targetValue = when {
+//            timerFraction > 0.5f -> ColorCorrect
+//            timerFraction > 0.2f -> ColorAccent
+//            else                 -> ColorWrong
+//        },
+//        animationSpec = tween(durationMillis = 600),
+//        label         = "timerColor",
+//    )
+//
+//    val minutes = timeRemainingSeconds / 60
+//    val seconds = timeRemainingSeconds % 60
+//
+//    Row(
+//        modifier          = Modifier
+//            .clip(RoundedCornerShape(8.dp))
+//            .background(timerColor.copy(alpha = 0.12f))
+//            .padding(horizontal = 10.dp, vertical = 5.dp),
+//        verticalAlignment = Alignment.CenterVertically,
+//    ) {
+//        Box(
+//            modifier = Modifier
+//                .size(6.dp)
+//                .clip(RoundedCornerShape(50))
+//                .background(timerColor),
+//        )
+//        Spacer(Modifier.width(6.dp))
+//        Text(
+//            text  = "%d:%02d".format(minutes, seconds),
+//            color = timerColor,
+//            style = AppTheme.typography.body1.copy(
+//                fontWeight = FontWeight.Bold,
+//                fontSize   = 14.sp,
+//                letterSpacing = 1.sp,
+//            ),
+//        )
+//    }
+//}
+//
+//// ── Question section ──────────────────────────────────────────────────────────
+//
+//@Composable
+//private fun QuestionSection(
+//    currentIndex: Int,
+//    totalQuestions: Int,
+//    questionText: String,
+//) {
+//    Column {
+//        Text(
+//            text  = "QUESTION ${currentIndex + 1}",
+//            color = ColorAccent,
+//            style = AppTheme.typography.body2.copy(
+//                fontSize      = 10.sp,
+//                fontWeight    = FontWeight.Bold,
+//                letterSpacing = 2.sp,
+//            ),
+//        )
+//        Spacer(Modifier.height(10.dp))
+//        Text(
+//            text  = questionText,
+//            color = ColorTextPrimary,
+//            style = AppTheme.typography.h2.copy(
+//                fontSize   = 22.sp,
+//                fontWeight = FontWeight.Bold,
+//                fontStyle  = FontStyle.Italic,
+//                lineHeight = 30.sp,
+//                letterSpacing = (-0.5).sp,
+//            ),
+//        )
+//    }
+//}
+//
+//// ── Options section ───────────────────────────────────────────────────────────
+//
+//@Composable
+//private fun OptionsSection(
+//    question: Question,
+//    selectedOptionIndex: Int?,
+//    isAnswerRevealed: Boolean,
+//    onOptionSelected: (Int) -> Unit,
+//) {
+//    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+//        question.options.forEachIndexed { index, optionText ->
+//            OptionCard(
+//                index               = index,
+//                text                = optionText,
+//                isSelected          = selectedOptionIndex == index,
+//                isCorrect           = question.isCorrect(index),
+//                isAnswerRevealed    = isAnswerRevealed,
+//                isEnabled           = !isAnswerRevealed,
+//                onOptionSelected    = onOptionSelected,
+//            )
+//        }
+//    }
+//}
+//
+//@Composable
+//private fun OptionCard(
+//    index: Int,
+//    text: String,
+//    isSelected: Boolean,
+//    isCorrect: Boolean,
+//    isAnswerRevealed: Boolean,
+//    isEnabled: Boolean,
+//    onOptionSelected: (Int) -> Unit,
+//) {
+//    // Compute the reveal state for this specific card
+//    val revealAsCorrect = isAnswerRevealed && isCorrect
+//    val revealAsWrong   = isAnswerRevealed && isSelected && !isCorrect
+//
+//    // Animate card background color
+//    val containerColor by animateColorAsState(
+//        targetValue = when {
+//            revealAsCorrect -> ColorCorrect.copy(alpha = 0.15f)
+//            revealAsWrong   -> ColorWrong.copy(alpha = 0.15f)
+//            isSelected      -> ColorAccent.copy(alpha = 0.10f)
+//            else            -> ColorSurface
+//        },
+//        animationSpec = tween(durationMillis = 350),
+//        label         = "cardBg_$index",
+//    )
+//
+//    // Animate the left-border accent color — the signature visual indicator
+//    val borderAccentColor by animateColorAsState(
+//        targetValue = when {
+//            revealAsCorrect -> ColorCorrect
+//            revealAsWrong   -> ColorWrong
+//            isSelected      -> ColorAccent
+//            else            -> Color.Transparent
+//        },
+//        animationSpec = tween(durationMillis = 350),
+//        label         = "border_$index",
+//    )
+//
+//    val textColor by animateColorAsState(
+//        targetValue = when {
+//            revealAsCorrect -> ColorCorrect
+//            revealAsWrong   -> ColorWrong
+//            isSelected      -> ColorAccent
+//            else            -> ColorTextPrimary
+//        },
+//        animationSpec = tween(durationMillis = 350),
+//        label         = "textColor_$index",
+//    )
+//
+//    OutlinedCard(
+//        onClick  = { if (isEnabled) onOptionSelected(index) },
+//        enabled  = isEnabled,
+//        modifier = Modifier.fillMaxWidth(),
+//        shape    = RoundedCornerShape(14.dp),
+//        colors   = CardDefaults.cardColors(
+//            containerColor = containerColor,
+//            contentColor   = textColor,
+//        ),
+//        border   = androidx.compose.foundation.BorderStroke(1.dp, ColorBorder),
+//    ) {
+//        Row(
+//            modifier          = Modifier
+//                .fillMaxWidth()
+//                .padding(vertical = 4.dp),
+//            verticalAlignment = Alignment.CenterVertically,
+//        ) {
+//            // ── Left accent border strip ──────────────────────────────────────
+//            // The signature reveal element: a thin left strip that lights up
+//            // green or red when the answer is revealed.
+//            Box(
+//                modifier = Modifier
+//                    .width(4.dp)
+//                    .height(52.dp)
+//                    .background(
+//                        color = borderAccentColor,
+//                        shape = RoundedCornerShape(topEnd = 4.dp, bottomEnd = 4.dp),
+//                    ),
+//            )
+//
+//            // ── Option label (A, B, C, D) ─────────────────────────────────────
+//            Box(
+//                modifier          = Modifier
+//                    .padding(start = 14.dp)
+//                    .size(28.dp)
+//                    .clip(RoundedCornerShape(8.dp))
+//                    .background(ColorSurfaceHigh),
+//                contentAlignment  = Alignment.Center,
+//            ) {
+//                Text(
+//                    text  = ('A' + index).toString(),
+//                    color = textColor,
+//                    style = AppTheme.typography.body2.copy(
+//                        fontWeight = FontWeight.Bold,
+//                        fontSize   = 12.sp,
+//                    ),
+//                )
+//            }
+//
+//            Spacer(Modifier.width(12.dp))
+//
+//            // ── Option text ───────────────────────────────────────────────────
+//            Text(
+//                text   = text,
+//                color  = textColor,
+//                style  = AppTheme.typography.body1.copy(
+//                    fontSize   = 15.sp,
+//                    lineHeight = 20.sp,
+//                ),
+//                modifier = Modifier
+//                    .weight(1f)
+//                    .padding(end = 14.dp, top = 14.dp, bottom = 14.dp),
+//            )
+//        }
+//    }
+//}
+//
+//// ── Async states ──────────────────────────────────────────────────────────────
+//
+//@Composable
+//private fun QuizLoadingState() {
+//    Box(
+//        modifier         = Modifier.fillMaxSize(),
+//        contentAlignment = Alignment.Center,
+//    ) {
+//        CircularProgressIndicator(
+//            modifier    = Modifier.size(36.dp),
+//            color       = ColorAccent,
+//            trackColor  = ColorSurfaceHigh,
+//            strokeWidth = 3.dp,
+//        )
+//    }
+//}
+//
+//@Composable
+//private fun QuizErrorState(message: String) {
+//    Box(
+//        modifier         = Modifier
+//            .fillMaxSize()
+//            .padding(40.dp),
+//        contentAlignment = Alignment.Center,
+//    ) {
+//        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+//            Text(
+//                text      = message,
+//                color     = ColorWrong,
+//                textAlign = TextAlign.Center,
+//                style     = AppTheme.typography.body1.copy(lineHeight = 22.sp),
+//            )
+//        }
+//    }
+//}
 
-// Auto-advance delay after answer reveal (ms)
-private const val AUTO_ADVANCE_DELAY_MS = 1_200L
-
-/**
- * Entry-point composable for the Quiz Engine screen.
- *
- * @param quizId             Sourced from the type-safe navigation route.
- * @param totalTimeInMinutes Sourced from the quiz domain model; passed
- *                           to [QuizEngineViewModel] via Koin [parametersOf].
- * @param onQuizFinished     Called when [QuizUiState.Finished] is emitted.
- *                           The NavHost navigates to [Screen.Results].
- */
 @Composable
 fun QuizEngineScreen(
     quizId: Long,
@@ -73,7 +496,6 @@ fun QuizEngineScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
-    // Observe Finished state once and navigate
     LaunchedEffect(state) {
         if (state is QuizUiState.Finished) {
             val finished = state as QuizUiState.Finished
@@ -81,10 +503,7 @@ fun QuizEngineScreen(
         }
     }
 
-    QuizEngineContent(
-        state   = state,
-        onEvent = viewModel::onEvent,
-    )
+    QuizEngineContent(state = state, onEvent = viewModel::onEvent)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -102,11 +521,10 @@ private fun QuizEngineContent(
             .background(ColorBackground),
     ) {
         when (state) {
-            QuizUiState.Loading   -> QuizLoadingState()
-            is QuizUiState.Error  -> QuizErrorState(state.message)
-            is QuizUiState.Active -> QuizActiveState(state = state, onEvent = onEvent)
-            // Finished → handled via LaunchedEffect navigation; show nothing here
-            is QuizUiState.Finished -> QuizLoadingState()
+            QuizUiState.Loading         -> QuizLoadingState()
+            is QuizUiState.Error        -> QuizErrorState(state.message)
+            is QuizUiState.Active       -> QuizActiveState(state = state, onEvent = onEvent)
+            is QuizUiState.Finished     -> QuizLoadingState()
         }
     }
 }
@@ -121,13 +539,8 @@ private fun QuizActiveState(
     val haptic = LocalHapticFeedback.current
     val isLastQuestion = state.currentIndex == state.totalQuestions - 1
 
-    // Auto-advance to next question after answer is revealed
-    LaunchedEffect(state.selectedOptionIndex) {
-        if (state.isAnswerRevealed && !isLastQuestion) {
-            delay(AUTO_ADVANCE_DELAY_MS)
-            onEvent(QuizEvent.NextQuestion)
-        }
-    }
+    // The auto-advance LaunchedEffect has been removed from the UI layer.
+    // The ViewModel now owns the advance delay atomically — see QuizEngineViewModel.
 
     Column(
         modifier = Modifier
@@ -135,10 +548,35 @@ private fun QuizActiveState(
             .statusBarsPadding()
             .navigationBarsPadding(),
     ) {
-        // ── Top bar: progress + timer ─────────────────────────────────────────
         QuizTopBar(state = state)
 
-        // ── Scrollable question + options ─────────────────────────────────────
+        // ── FIX 2A: key() block forces full node recreation on question change ─
+        //
+        // ROOT CAUSE (color-flicker):
+        // Without `key()`, Compose's slot table reuses the same OptionCard
+        // composable nodes when the question changes. The `animateColorAsState`
+        // inside each OptionCard stores its animation clock in Compose's internal
+        // remembered state — that state is attached to the NODE, not the data.
+        //
+        // When `question` switches, the inputs (isSelected, isAnswerRevealed)
+        // reset to neutral instantly, but the animation clock is still mid-flight
+        // toward the previous Green/Red color. The next few frames render the
+        // stale in-progress color before the new animation can catch up — that
+        // is the visible flicker.
+        //
+        // FIX — `key(state.currentQuestion.id)`:
+        // Compose treats the content of a `key()` block as a completely new
+        // subtree whenever the key value changes. It destroys all composable
+        // nodes inside it (including their remembered animation state) and
+        // creates fresh ones. The new OptionCards start with their
+        // `animateColorAsState` at the neutral color with zero velocity —
+        // there is no stale animation clock to produce a flicker.
+        //
+        // `state.currentQuestion.id` is the correct key:
+        //   - It changes precisely when the question changes (not on every timer tick).
+        //   - It is stable across recompositions within the same question.
+        //   - Using `state.currentIndex` would also work but is less semantically
+        //     precise — the question's own identity is the correct keying signal.
         Column(
             modifier = Modifier
                 .weight(1f)
@@ -147,24 +585,29 @@ private fun QuizActiveState(
         ) {
             Spacer(Modifier.height(24.dp))
             QuestionSection(
-                currentIndex  = state.currentIndex,
+                currentIndex   = state.currentIndex,
                 totalQuestions = state.totalQuestions,
-                questionText  = state.currentQuestion.questionText,
+                questionText   = state.currentQuestion.questionText,
             )
             Spacer(Modifier.height(28.dp))
-            OptionsSection(
-                question           = state.currentQuestion,
-                selectedOptionIndex = state.selectedOptionIndex,
-                isAnswerRevealed   = state.isAnswerRevealed,
-                onOptionSelected   = { index ->
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    onEvent(QuizEvent.OptionSelected(index))
-                },
-            )
+
+            // ── key() wraps the full options subtree ──────────────────────────
+            androidx.compose.runtime.key(state.currentQuestion.id) {
+                OptionsSection(
+                    question            = state.currentQuestion,
+                    selectedOptionIndex = state.selectedOptionIndex,
+                    isAnswerRevealed    = state.isAnswerRevealed,
+                    onOptionSelected    = { index ->
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onEvent(QuizEvent.OptionSelected(index))
+                    },
+                )
+            }
+            // ── end key() block ───────────────────────────────────────────────
+
             Spacer(Modifier.height(24.dp))
         }
 
-        // ── Bottom action ─────────────────────────────────────────────────────
         if (state.isAnswerRevealed && isLastQuestion) {
             Box(
                 modifier = Modifier
@@ -198,7 +641,6 @@ private fun QuizTopBar(state: QuizUiState.Active) {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment     = Alignment.CenterVertically,
         ) {
-            // Question counter
             Text(
                 text  = "${state.currentIndex + 1} / ${state.totalQuestions}",
                 color = ColorTextSecondary,
@@ -208,8 +650,6 @@ private fun QuizTopBar(state: QuizUiState.Active) {
                     letterSpacing = 0.5.sp,
                 ),
             )
-
-            // Countdown timer
             TimerBadge(
                 timeRemainingSeconds = state.timeRemainingSeconds,
                 timerFraction        = state.timerFraction,
@@ -218,7 +658,6 @@ private fun QuizTopBar(state: QuizUiState.Active) {
 
         Spacer(Modifier.height(12.dp))
 
-        // Lumo LinearProgressIndicator for question progress
         LinearProgressIndicator(
             progress   = state.progressFraction,
             modifier   = Modifier
@@ -236,7 +675,6 @@ private fun TimerBadge(
     timeRemainingSeconds: Int,
     timerFraction: Float,
 ) {
-    // Color shifts from green → accent → red as time depletes
     val timerColor by animateColorAsState(
         targetValue = when {
             timerFraction > 0.5f -> ColorCorrect
@@ -268,8 +706,8 @@ private fun TimerBadge(
             text  = "%d:%02d".format(minutes, seconds),
             color = timerColor,
             style = AppTheme.typography.body1.copy(
-                fontWeight = FontWeight.Bold,
-                fontSize   = 14.sp,
+                fontWeight    = FontWeight.Bold,
+                fontSize      = 14.sp,
                 letterSpacing = 1.sp,
             ),
         )
@@ -299,10 +737,10 @@ private fun QuestionSection(
             text  = questionText,
             color = ColorTextPrimary,
             style = AppTheme.typography.h2.copy(
-                fontSize   = 22.sp,
-                fontWeight = FontWeight.Bold,
-                fontStyle  = FontStyle.Italic,
-                lineHeight = 30.sp,
+                fontSize      = 22.sp,
+                fontWeight    = FontWeight.Bold,
+                fontStyle     = FontStyle.Italic,
+                lineHeight    = 30.sp,
                 letterSpacing = (-0.5).sp,
             ),
         )
@@ -321,13 +759,13 @@ private fun OptionsSection(
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         question.options.forEachIndexed { index, optionText ->
             OptionCard(
-                index               = index,
-                text                = optionText,
-                isSelected          = selectedOptionIndex == index,
-                isCorrect           = question.isCorrect(index),
-                isAnswerRevealed    = isAnswerRevealed,
-                isEnabled           = !isAnswerRevealed,
-                onOptionSelected    = onOptionSelected,
+                index            = index,
+                text             = optionText,
+                isSelected       = selectedOptionIndex == index,
+                isCorrect        = question.isCorrect(index),
+                isAnswerRevealed = isAnswerRevealed,
+                isEnabled        = !isAnswerRevealed,
+                onOptionSelected = onOptionSelected,
             )
         }
     }
@@ -343,11 +781,13 @@ private fun OptionCard(
     isEnabled: Boolean,
     onOptionSelected: (Int) -> Unit,
 ) {
-    // Compute the reveal state for this specific card
     val revealAsCorrect = isAnswerRevealed && isCorrect
     val revealAsWrong   = isAnswerRevealed && isSelected && !isCorrect
 
-    // Animate card background color
+    // Because this composable is inside a key(question.id) block, these
+    // animateColorAsState instances are always created fresh for each question.
+    // They start at the neutral target and animate forward — never backward
+    // from a stale previous-question color.
     val containerColor by animateColorAsState(
         targetValue = when {
             revealAsCorrect -> ColorCorrect.copy(alpha = 0.15f)
@@ -359,7 +799,6 @@ private fun OptionCard(
         label         = "cardBg_$index",
     )
 
-    // Animate the left-border accent color — the signature visual indicator
     val borderAccentColor by animateColorAsState(
         targetValue = when {
             revealAsCorrect -> ColorCorrect
@@ -399,9 +838,6 @@ private fun OptionCard(
                 .padding(vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // ── Left accent border strip ──────────────────────────────────────
-            // The signature reveal element: a thin left strip that lights up
-            // green or red when the answer is revealed.
             Box(
                 modifier = Modifier
                     .width(4.dp)
@@ -411,15 +847,13 @@ private fun OptionCard(
                         shape = RoundedCornerShape(topEnd = 4.dp, bottomEnd = 4.dp),
                     ),
             )
-
-            // ── Option label (A, B, C, D) ─────────────────────────────────────
             Box(
-                modifier          = Modifier
+                modifier         = Modifier
                     .padding(start = 14.dp)
                     .size(28.dp)
                     .clip(RoundedCornerShape(8.dp))
                     .background(ColorSurfaceHigh),
-                contentAlignment  = Alignment.Center,
+                contentAlignment = Alignment.Center,
             ) {
                 Text(
                     text  = ('A' + index).toString(),
@@ -430,14 +864,11 @@ private fun OptionCard(
                     ),
                 )
             }
-
             Spacer(Modifier.width(12.dp))
-
-            // ── Option text ───────────────────────────────────────────────────
             Text(
-                text   = text,
-                color  = textColor,
-                style  = AppTheme.typography.body1.copy(
+                text     = text,
+                color    = textColor,
+                style    = AppTheme.typography.body1.copy(
                     fontSize   = 15.sp,
                     lineHeight = 20.sp,
                 ),

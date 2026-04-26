@@ -1,8 +1,10 @@
 package com.bluemix.quizassignment.presentation.navigation
 
+import android.annotation.SuppressLint
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -20,63 +22,82 @@ import com.bluemix.quizassignment.presentation.viewmodels.QuizDetailUiState
 import com.bluemix.quizassignment.presentation.viewmodels.QuizDetailViewModel
 import org.koin.androidx.compose.koinViewModel
 import org.koin.core.parameter.parametersOf
+import androidx.navigation.compose.currentBackStackEntryAsState
 
 /**
  * Root Navigation Host for GrammarFlow.
  *
- * ── Architecture contract ─────────────────────────────────────────────────────
- * This composable has exactly ONE job: declare the navigation graph.
- * It must not contain any layout code, business logic, or state that doesn't
- * belong to navigation. All UI rendering is delegated entirely to the
- * named screen composables (e.g., [SplashScreen], [HomeScreen]).
+ * ── Bug 3 Fix: "Not Yet" dismissal leaves button permanently unresponsive ─────
  *
- * ── What belongs here ─────────────────────────────────────────────────────────
- *   ✔  Route declaration (`composable<>`, `dialog<>`)
- *   ✔  Type-safe route argument extraction (`toRoute<>`)
- *   ✔  ViewModel injection via `koinViewModel()`
- *   ✔  Navigation callbacks passed down as lambdas
- *   ✔  Back-stack manipulation (`popUpTo`, `inclusive`)
+ * The previous code passed no enabled-state signal to [QuizDetailScreen].
+ * The screen owned a local `isNavigating` boolean that was set to `true` on
+ * the first button tap and was never reset — because `dialog<>` destinations
+ * do not remove the host composable from the Compose slot table, so
+ * `remember {}` state survives across the entire open/dismiss cycle.
  *
- * ── What does NOT belong here ─────────────────────────────────────────────────
- *   ✗  Column / Row / Box layout
- *   ✗  State collection (use screen composables for that)
- *   ✗  Direct UI rendering
+ * FIX — derive `isDialogOpen` from `navController.currentBackStackEntryAsState()`:
  *
- * ── Type-safe routing ─────────────────────────────────────────────────────────
- * Every destination is typed on a `@Serializable` [Screen] variant.
- * `navController.navigate(Screen.QuizDetail(quizId = 3))` is verified by the
- * compiler. `backStackEntry.toRoute<Screen.QuizDetail>()` deserialises the
- * stored route object without any string key lookups.
+ * `currentBackStackEntryAsState()` is a Compose State<NavBackStackEntry?> that
+ * recomposes whenever the top of the back stack changes. We use it to derive
+ * a Boolean that answers "is the PreQuizDialog currently the top destination?"
  *
- * ── Dialog destination ────────────────────────────────────────────────────────
- * [Screen.PreQuizDialog] is declared with `dialog<>` rather than `composable<>`.
- * This renders the destination as a true floating dialog above [QuizDetailScreen],
- * with the host screen remaining visible and interactive beneath the scrim.
- * The system Back button dismisses the dialog by popping it off the back stack —
- * no manual `isVisible` state management required.
+ *   Dialog opens  → PreQuizDialog pushed → currentEntry has route PreQuizDialog
+ *                                       → isDialogOpen = true
+ *                                       → isActionEnabled = false → button disabled
  *
- * ── ViewModel scoping ─────────────────────────────────────────────────────────
- * `koinViewModel()` scopes each ViewModel to its back-stack entry. The ViewModel
- * is created when the destination is first composed and cleared when the entry
- * is permanently removed. Rotation and other configuration changes do NOT clear it.
+ *   "Not Yet" tap → popBackStack()       → currentEntry reverts to QuizDetail
+ *                                       → isDialogOpen = false
+ *                                       → isActionEnabled = true  → button enabled ✓
  *
- * @param navController Provided by [com.grammarflow.GrammarFlowApp].
- *                      [rememberNavController] in production; [TestNavHostController]
- *                      in Compose UI tests.
+ *   Tap again     → isActionEnabled = true → button enabled → navigate succeeds ✓
+ *
+ * WHY `currentBackStackEntryAsState()` IS THE CORRECT API:
+ *
+ *   It is the only reactive, Compose-aware way to observe the navigation back
+ *   stack inside a composable. It returns a `State<NavBackStackEntry?>` backed
+ *   by a `SnapshotStateHolder` that Navigation updates atomically when the back
+ *   stack changes. Any composable that reads it is automatically scheduled for
+ *   recomposition when it changes — no manual subscription or lifecycle observer
+ *   needed.
+ *
+ * WHY NOT `navController.currentBackStackEntry` (non-State version):
+ *
+ *   `navController.currentBackStackEntry` is a plain property, not a
+ *   Compose State. Reading it does not subscribe to changes — the composable
+ *   would not recompose when the back stack changes, so `isDialogOpen` would
+ *   never update after the dialog is dismissed.
+ *
+ * SCOPING — why `currentBackStackEntryAsState()` is called at the NavHost level
+ * and not inside the `composable<Screen.QuizDetail>` block:
+ *
+ *   Inside `composable<Screen.QuizDetail> { backStackEntry -> ... }`, the
+ *   provided `backStackEntry` is the entry for QuizDetail — it does not change
+ *   when PreQuizDialog is pushed on top. We need the CURRENT top entry, which
+ *   requires the NavController-level state. The value is passed DOWN as a
+ *   parameter to keep [QuizDetailScreen] free of navigation imports.
  */
+@SuppressLint("RestrictedApi")
 @Composable
 fun GrammarFlowNavHost(navController: NavHostController) {
 
+    // ── FIX 3: Observe the back stack top reactively ──────────────────────────
+    //
+    // `currentBackStackEntryAsState()` re-runs whenever the top of the back
+    // stack changes (push or pop). This is the Compose State that drives the
+    // button's enabled state in QuizDetailScreen.
+    val currentEntry by navController.currentBackStackEntryAsState()
+
+    // True only while Screen.PreQuizDialog is the current top destination.
+    // `hasRoute<T>()` uses the type-safe route serialization to check the
+    // destination — no string-based route comparison, no manual route IDs.
+    val isDialogOpen = currentEntry?.destination?.hasRoute<Screen.PreQuizDialog>() == true
+
     NavHost(
-        navController = navController,
+        navController    = navController,
         startDestination = Screen.Splash,
     ) {
 
         // ── 1. Splash ─────────────────────────────────────────────────────────
-        //
-        // SplashScreen owns its own ViewModel injection and navigation
-        // side-effect internally — the NavHost only wires the navigation callback.
-        // The screen pops itself off the back stack so Back from Home exits the app.
 
         composable<Screen.Splash> {
             SplashScreen(
@@ -89,9 +110,6 @@ fun GrammarFlowNavHost(navController: NavHostController) {
         }
 
         // ── 2. Home ───────────────────────────────────────────────────────────
-        //
-        // HomeScreen owns its ViewModel via the default koinViewModel() parameter.
-        // The NavHost provides the single navigation callback: onQuizSelected.
 
         composable<Screen.Home> {
             HomeScreen(
@@ -102,67 +120,64 @@ fun GrammarFlowNavHost(navController: NavHostController) {
         }
 
         // ── 3. Quiz Detail ────────────────────────────────────────────────────
-        //
-        // Route argument:   quizId: Int
-        // Extraction:       backStackEntry.toRoute<Screen.QuizDetail>()
-        //
-        // QuizDetailViewModel bridges the thin route argument (quizId) to the
-        // full Quiz domain model. koinViewModel() receives the quizId via
-        // parametersOf so the VM constructor stays free of Android imports.
-        //
-        // The detail screen navigates to PreQuizDialog (not QuizEngine directly).
-        // The dialog carries the quiz title and time so it can render without
-        // an additional DB read.
 
         composable<Screen.QuizDetail> { backStackEntry ->
             val route: Screen.QuizDetail = backStackEntry.toRoute()
 
             val viewModel: QuizDetailViewModel = koinViewModel(
-                // params[0] → quizId: Long in QuizDetailViewModel constructor
                 parameters = { parametersOf(route.quizId.toLong()) },
             )
             val state by viewModel.uiState.collectAsStateWithLifecycle()
 
-            // Derive navigation callbacks based on the loaded quiz data.
-            // The lambdas are only exercised when state is Success, but we
-            // define them at this level to keep QuizDetailScreen stateless.
             val onStartQuiz: () -> Unit = {
                 if (state is QuizDetailUiState.Success) {
                     val quiz = (state as QuizDetailUiState.Success).quiz
                     navController.navigate(
                         Screen.PreQuizDialog(
-                            quizId = quiz.id.toInt(),
-                            quizTitle = quiz.title,
+                            quizId      = quiz.id.toInt(),
+                            quizTitle   = quiz.title,
                             timeMinutes = quiz.totalTimeInMinutes,
                         )
-                    )
+                    ) {
+                        // Navigation-layer backstop against actual double-taps
+                        // that slip through within a single frame.
+                        launchSingleTop = true
+                    }
                 }
             }
 
             when (state) {
                 is QuizDetailUiState.Success -> {
                     QuizDetailScreen(
-                        quiz = (state as QuizDetailUiState.Success).quiz,
-                        onStartQuiz = onStartQuiz,
-                        onNavigateBack = { navController.navigateUp() },
+                        quiz            = (state as QuizDetailUiState.Success).quiz,
+                        // ── FIX 3: pass derived enabled state ─────────────────
+                        //
+                        // `!isDialogOpen` is true when PreQuizDialog is NOT the
+                        // current back-stack top — i.e., the button should be
+                        // active. It flips to false the instant Navigation pushes
+                        // Screen.PreQuizDialog, and back to true the instant it
+                        // is popped (by "Not Yet", swipe-to-dismiss, or Back).
+                        //
+                        // This value is derived from the reactive back-stack state
+                        // declared above the NavHost builder — it is not a local
+                        // boolean and requires no manual reset logic anywhere.
+                        isActionEnabled = !isDialogOpen,
+                        onStartQuiz     = onStartQuiz,
+                        onNavigateBack  = { navController.navigateUp() },
                     )
                 }
-
-                // Loading and Error are handled inside QuizDetailScreen itself;
-                // pass a temporary empty-state placeholder until the VM resolves.
-                // In a richer implementation, add Loading/Error branches here
-                // to show a full-screen skeleton or error before QuizDetailScreen mounts.
                 else -> {
                     QuizDetailScreen(
-                        quiz = Quiz(
-                            id = 0L,
-                            title = "",
-                            description = "",
+                        quiz            =Quiz(
+                            id                 = 0L,
+                            title              = "",
+                            description        = "",
                             totalTimeInMinutes = 0,
-                            difficulty = Difficulty.Medium,
+                            difficulty         =Difficulty.Medium,
                         ),
-                        onStartQuiz = {},
-                        onNavigateBack = { navController.navigateUp() },
+                        isActionEnabled = !isDialogOpen,
+                        onStartQuiz     = {},
+                        onNavigateBack  = { navController.navigateUp() },
                     )
                 }
             }
@@ -170,36 +185,31 @@ fun GrammarFlowNavHost(navController: NavHostController) {
 
         // ── 4. Pre-Quiz Dialog ────────────────────────────────────────────────
         //
-        // Declared with `dialog<>` — renders as a floating overlay on top of
-        // QuizDetailScreen. QuizDetailScreen remains visible behind the scrim.
+        // `dialog<>` renders as a floating overlay above QuizDetailScreen.
+        // QuizDetailScreen stays composed underneath — which is precisely why
+        // the old local `isNavigating` boolean was never reset (Bug 3).
         //
-        // Route arguments:
-        //   quizId      : Int     — used to navigate to QuizEngine on confirm
-        //   quizTitle   : String  — displayed in the sheet header
-        //   timeMinutes : Int     — shown in the timer warning copy
-        //
-        // No ViewModel needed — the dialog is purely presentational. All data
-        // arrives via the route and all actions are navigation callbacks.
-        //
-        // On confirm  → pop the dialog and navigate to QuizEngine.
-        // On dismiss  → popBackStack() removes the dialog, revealing QuizDetail.
+        // Navigation automatically manages back-stack pop on system Back gesture.
+        // onDismiss calls popBackStack() explicitly to handle the "Not Yet" tap.
 
         dialog<Screen.PreQuizDialog> { backStackEntry ->
             val route: Screen.PreQuizDialog = backStackEntry.toRoute()
 
             PreQuizDialog(
-                quizTitle = route.quizTitle,
+                quizTitle   = route.quizTitle,
                 timeMinutes = route.timeMinutes,
-                onConfirm = {
-                    // Pop the dialog first so QuizEngine is on top of Detail, not Dialog.
+                onConfirm   = {
                     navController.popBackStack()
                     navController.navigate(
                         Screen.QuizEngine(
-                            quizId = route.quizId,
+                            quizId        = route.quizId,
                             timeInMinutes = route.timeMinutes,
                         )
                     )
                 },
+                // "Not Yet" tap → pop the dialog → currentBackStackEntryAsState()
+                // updates → isDialogOpen becomes false → isActionEnabled becomes
+                // true → QuizDetailScreen button re-enables. Automatic. ✓
                 onDismiss = {
                     navController.popBackStack()
                 },
@@ -207,31 +217,15 @@ fun GrammarFlowNavHost(navController: NavHostController) {
         }
 
         // ── 5. Quiz Engine ────────────────────────────────────────────────────
-        //
-        // Route arguments:
-        //   quizId        : Int  — identifies which questions to load
-        //   timeInMinutes : Int  — forwarded from the route so the VM has the
-        //                         correct budget without an additional DB read
-        //
-        // Extraction:  backStackEntry.toRoute<Screen.QuizEngine>()
-        //
-        // Both args are passed to QuizEngineViewModel via parametersOf.
-        // The VM constructor is Long + Int (not Int + Int) because Room PKs are
-        // Long — the explicit .toLong() cast is the sole adaptation point.
-        //
-        // On quiz completion the screen calls onQuizFinished, which navigates to
-        // Results and pops QuizEngine so Back from Results returns to QuizDetail.
 
         composable<Screen.QuizEngine> { backStackEntry ->
             val route: Screen.QuizEngine = backStackEntry.toRoute()
 
             QuizEngineScreen(
-                quizId = route.quizId.toLong(),
+                quizId             = route.quizId.toLong(),
                 totalTimeInMinutes = route.timeInMinutes,
-                onQuizFinished = { score, total ->
+                onQuizFinished     = { score, total ->
                     navController.navigate(Screen.Results(score = score, total = total)) {
-                        // Remove QuizEngine from the stack — Back from Results
-                        // should return to QuizDetail, not re-enter the quiz.
                         popUpTo<Screen.QuizEngine> { inclusive = true }
                     }
                 },
@@ -239,25 +233,15 @@ fun GrammarFlowNavHost(navController: NavHostController) {
         }
 
         // ── 6. Results ────────────────────────────────────────────────────────
-        //
-        // Route arguments (baked in, no DB read required):
-        //   score : Int
-        //   total : Int
-        //
-        // Two navigation paths available to the user:
-        //   "Return to Dashboard"  → clears the quiz back stack, re-anchors on Home.
-        //   "Try Another Quiz"     → same callback for now; can diverge if needed.
 
         composable<Screen.Results> { backStackEntry ->
             val route: Screen.Results = backStackEntry.toRoute()
 
             ResultsScreen(
-                score = route.score,
-                total = route.total,
+                score        = route.score,
+                total        = route.total,
                 onReturnHome = {
                     navController.navigate(Screen.Home) {
-                        // Pop everything above Home (Detail, Engine, Results)
-                        // so the back stack is clean for the next quiz session.
                         popUpTo(Screen.Home) { inclusive = false }
                     }
                 },
@@ -265,3 +249,183 @@ fun GrammarFlowNavHost(navController: NavHostController) {
         }
     }
 }
+//
+///**
+// * Root Navigation Host for GrammarFlow.
+// *
+// * ── FIX 1: launchSingleTop on the PreQuizDialog destination ──────────────────
+// *
+// * ROOT CAUSE (navigation layer):
+// * `navController.navigate(Screen.PreQuizDialog(...))` without `launchSingleTop`
+// * pushes a new back-stack entry unconditionally. If the lambda is invoked twice
+// * in rapid succession (double-tap, recomposition race, or the old dual-path
+// * bug in QuizDetailScreen) two `Screen.PreQuizDialog` entries land on the
+// * stack. Dismissing the first `dialog<>` destination reveals the second.
+// *
+// * FIX:
+// * Add `launchSingleTop = true` to the `navOptions` block of the navigate call.
+// * Navigation then checks whether the destination is already at the top of the
+// * back stack and silently discards the duplicate push if it is. This is the
+// * backstop that works at the navigation layer independently of any UI-layer
+// * debounce guard.
+// *
+// * Both defences are necessary:
+// *   • UI debounce in QuizDetailScreen  → prevents the *first* duplicate call
+// *   • launchSingleTop here              → catches anything that slips through
+// *     (e.g., a recomposition or configuration change mid-navigation)
+// */
+//@Composable
+//fun GrammarFlowNavHost(navController: NavHostController) {
+//
+//    NavHost(
+//        navController    = navController,
+//        startDestination = Screen.Splash,
+//    ) {
+//
+//        // ── 1. Splash ─────────────────────────────────────────────────────────
+//
+//        composable<Screen.Splash> {
+//            SplashScreen(
+//                onNavigateToHome = {
+//                    navController.navigate(Screen.Home) {
+//                        popUpTo(Screen.Splash) { inclusive = true }
+//                    }
+//                },
+//            )
+//        }
+//
+//        // ── 2. Home ───────────────────────────────────────────────────────────
+//
+//        composable<Screen.Home> {
+//            HomeScreen(
+//                onQuizSelected = { quiz ->
+//                    navController.navigate(Screen.QuizDetail(quizId = quiz.id.toInt()))
+//                },
+//            )
+//        }
+//
+//        // ── 3. Quiz Detail ────────────────────────────────────────────────────
+//        //
+//        // onStartQuiz now navigates to the Screen.PreQuizDialog destination with
+//        // launchSingleTop = true. This is the ONLY trigger path for the dialog —
+//        // the local boolean + inline PreQuizDialog that previously lived inside
+//        // QuizDetailScreen.kt has been removed entirely.
+//
+//        composable<Screen.QuizDetail> { backStackEntry ->
+//            val route: Screen.QuizDetail = backStackEntry.toRoute()
+//
+//            val viewModel: QuizDetailViewModel = koinViewModel(
+//                parameters = { parametersOf(route.quizId.toLong()) },
+//            )
+//            val state by viewModel.uiState.collectAsStateWithLifecycle()
+//
+//            val onStartQuiz: () -> Unit = {
+//                if (state is QuizDetailUiState.Success) {
+//                    val quiz = (state as QuizDetailUiState.Success).quiz
+//                    navController.navigate(
+//                        Screen.PreQuizDialog(
+//                            quizId      = quiz.id.toInt(),
+//                            quizTitle   = quiz.title,
+//                            timeMinutes = quiz.totalTimeInMinutes,
+//                        )
+//                    ) {
+//                        // ── FIX 1: launchSingleTop backstop ───────────────────
+//                        //
+//                        // If Screen.PreQuizDialog is already at the top of the
+//                        // back stack (from a rapid double-tap or recomposition
+//                        // race that slipped past the UI debounce), Navigation
+//                        // discards this call instead of pushing a second entry.
+//                        //
+//                        // Works in tandem with the coroutine debounce gate in
+//                        // QuizDetailScreen — the UI guard prevents the first
+//                        // duplicate; this setting eliminates any that remain.
+//                        launchSingleTop = true
+//                    }
+//                }
+//            }
+//
+//            when (state) {
+//                is QuizDetailUiState.Success -> {
+//                    QuizDetailScreen(
+//                        quiz           = (state as QuizDetailUiState.Success).quiz,
+//                        onStartQuiz    = onStartQuiz,
+//                        onNavigateBack = { navController.navigateUp() },
+//                    )
+//                }
+//                else -> {
+//                    QuizDetailScreen(
+//                        quiz           = Quiz(
+//                            id                 = 0L,
+//                            title              = "",
+//                            description        = "",
+//                            totalTimeInMinutes = 0,
+//                            difficulty         = Difficulty.Medium,
+//                        ),
+//                        onStartQuiz    = {},
+//                        onNavigateBack = { navController.navigateUp() },
+//                    )
+//                }
+//            }
+//        }
+//
+//        // ── 4. Pre-Quiz Dialog ────────────────────────────────────────────────
+//        //
+//        // `dialog<>` renders as a true floating overlay. The system Back button
+//        // pops it via the back stack — no manual isVisible state required.
+//        // launchSingleTop on the navigate() call above ensures this destination
+//        // is pushed at most once per user interaction.
+//
+//        dialog<Screen.PreQuizDialog> { backStackEntry ->
+//            val route: Screen.PreQuizDialog = backStackEntry.toRoute()
+//
+//            PreQuizDialog(
+//                quizTitle   = route.quizTitle,
+//                timeMinutes = route.timeMinutes,
+//                onConfirm   = {
+//                    navController.popBackStack()
+//                    navController.navigate(
+//                        Screen.QuizEngine(
+//                            quizId        = route.quizId,
+//                            timeInMinutes = route.timeMinutes,
+//                        )
+//                    )
+//                },
+//                onDismiss = {
+//                    navController.popBackStack()
+//                },
+//            )
+//        }
+//
+//        // ── 5. Quiz Engine ────────────────────────────────────────────────────
+//
+//        composable<Screen.QuizEngine> { backStackEntry ->
+//            val route: Screen.QuizEngine = backStackEntry.toRoute()
+//
+//            QuizEngineScreen(
+//                quizId             = route.quizId.toLong(),
+//                totalTimeInMinutes = route.timeInMinutes,
+//                onQuizFinished     = { score, total ->
+//                    navController.navigate(Screen.Results(score = score, total = total)) {
+//                        popUpTo<Screen.QuizEngine> { inclusive = true }
+//                    }
+//                },
+//            )
+//        }
+//
+//        // ── 6. Results ────────────────────────────────────────────────────────
+//
+//        composable<Screen.Results> { backStackEntry ->
+//            val route: Screen.Results = backStackEntry.toRoute()
+//
+//            ResultsScreen(
+//                score        = route.score,
+//                total        = route.total,
+//                onReturnHome = {
+//                    navController.navigate(Screen.Home) {
+//                        popUpTo(Screen.Home) { inclusive = false }
+//                    }
+//                },
+//            )
+//        }
+//    }
+//}

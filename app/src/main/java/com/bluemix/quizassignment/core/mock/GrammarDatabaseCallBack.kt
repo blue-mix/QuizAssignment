@@ -7,6 +7,8 @@ import androidx.room.RoomDatabase
 import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * Room [RoomDatabase.Callback] responsible for pre-populating the GrammarFlow
@@ -14,29 +16,72 @@ import kotlinx.coroutines.launch
  *
  * ── Lifecycle ─────────────────────────────────────────────────────────────────
  * [onCreate] fires exactly once — when Room creates the SQLite file for the
- * first time (fresh install or after the user clears app data). It does NOT
- * fire on subsequent app launches.
+ * first time (fresh install or after the user clears app data).
  *
- * ── Threading ─────────────────────────────────────────────────────────────────
- * Room calls [onCreate] on a background thread, but we still delegate all
- * suspend DAO calls to [seedScope] (provided by Koin's [DatabaseModule]) so
- * that the coroutine lifetime is controlled at the DI layer — not hard-coded
- * to [kotlinx.coroutines.GlobalScope].
+ * ── Threading contract ────────────────────────────────────────────────────────
  *
- * Using [SupervisorJob] (set up in [DatabaseModule]) ensures a failure seeding
- * questions does not cancel the quiz-insert job and vice versa.
+ * WHAT THREAD DOES ROOM CALL `onCreate` ON?
  *
- * ── Idempotency ──────────────────────────────────────────────────────────────
- * All DAO inserts use [androidx.room.OnConflictStrategy.IGNORE], so running
- * the seeder twice (e.g., in tests) produces no duplicate rows and throws no
- * exceptions.
+ * Room calls [onCreate] (and [onOpen]) on the thread that is executing the
+ * very first database operation — specifically, on the thread running inside
+ * the executor that was given to `setQueryExecutor()` on the builder.
  *
- * @param daoProvider  Lambda returning the [QuizDao] after the DB is built.
- *                     A lambda is used instead of passing the DAO directly
- *                     to break the circular dependency:
- *                     AppDatabase → Callback → DAO → AppDatabase.
- * @param seedScope    External [CoroutineScope] provided by Koin.
- *                     Survives configuration changes and screen navigation.
+ * In [DatabaseModule] we set `.setQueryExecutor(Dispatchers.IO.asExecutor())`,
+ * so [onCreate] is always called on a [Dispatchers.IO] worker thread.
+ *
+ * HOWEVER — the threading guarantee changes between Room versions and between
+ * "first open" scenarios:
+ *
+ *   • Standard first open  : Room calls `onCreate` on the query executor thread
+ *                             (IO) before returning the connection to the caller.
+ *   • Pre-packaged DB      : Room may call `onOpen` synchronously.
+ *   • `allowMainThreadQueries()` builds: `onCreate` can fire on the main thread.
+ *
+ * Because we cannot guarantee the calling context across all Room versions and
+ * configurations, the callback applies a DEFENSIVE `withContext(Dispatchers.IO)`
+ * around every DAO write operation. This is belt-and-suspenders safety:
+ *
+ *   - If Room calls `onCreate` on IO (normal case) → `withContext(IO)` is a
+ *     no-op context switch (the dispatcher sees the thread is already on IO and
+ *     continues inline). Zero overhead.
+ *   - If Room calls `onCreate` on an unexpected thread → `withContext(IO)`
+ *     reschedules the work onto a proper IO thread, preventing any SQLite
+ *     main-thread violation.
+ *
+ * ── Why `seedScope.launch` + `withContext(IO)` and not just `seedScope.launch(IO)` ─
+ *
+ * `seedScope.launch(Dispatchers.IO)` would set IO as the *initial* dispatcher
+ * for the launched coroutine. That is sufficient for the direct DAO calls, but
+ * it does not express the *intent* clearly — a future developer might remove
+ * the dispatcher parameter thinking it's redundant because the scope already
+ * uses IO. Using `withContext(Dispatchers.IO)` *inside* the seed functions
+ * makes the IO guarantee explicit and local to the code that performs I/O:
+ *
+ *   seedScope.launch {           ← scope provides the lifetime (SupervisorJob)
+ *       withContext(IO) {        ← this block explicitly requires IO
+ *           dao.insertQuizzes()  ← SQLite write, must be on IO
+ *       }
+ *   }
+ *
+ * This also means if a future developer adds a CPU-only preprocessing step
+ * before the DAO calls (e.g., JSON parsing), it can live outside `withContext`
+ * and run on the scope's default dispatcher without unintentionally blocking IO.
+ *
+ * ── Idempotency ───────────────────────────────────────────────────────────────
+ * All DAO inserts use [androidx.room.OnConflictStrategy.IGNORE]. Running the
+ * seeder twice (e.g., in instrumented tests that don't clear the DB between
+ * runs) produces no duplicate rows and throws no exceptions.
+ *
+ * ── Circular dependency prevention ────────────────────────────────────────────
+ * [daoProvider] is a lambda rather than a direct DAO reference. It is only
+ * evaluated inside [onCreate], at which point `AppDatabase` is fully constructed
+ * and present in the Koin graph. Direct injection would cause:
+ *   AppDatabase → Callback → DAO → AppDatabase  ← circular, Koin would throw.
+ *
+ * @param daoProvider  Lambda that calls `get<AppDatabase>().quizDao()` lazily.
+ * @param seedScope    Application-scoped [CoroutineScope] from [DatabaseModule].
+ *                     Uses [SupervisorJob] so one failing seed task does not
+ *                     cancel the others.
  */
 class GrammarDatabaseCallback(
     private val daoProvider: () -> QuizDao,
@@ -44,30 +89,78 @@ class GrammarDatabaseCallback(
 ) : RoomDatabase.Callback() {
 
     /**
-     * Called by Room the very first time the database file is created.
-     * Launches the seeder on [seedScope] and returns immediately so Room's
-     * internal initialisation is not blocked.
+     * Called by Room the first time the database file is created.
+     *
+     * Returns immediately after launching the seed coroutine — Room's internal
+     * open sequence is never blocked waiting for seed data. The quiz list screen
+     * will show a loading state while the seed coroutine runs in the background.
+     *
+     * @param db The raw [SupportSQLiteDatabase] handle. We do NOT use this
+     *           directly — all writes go through the type-safe [QuizDao].
      */
     override fun onCreate(db: SupportSQLiteDatabase) {
         super.onCreate(db)
+
         seedScope.launch {
-            val dao = daoProvider()
-            seedQuizzes(dao)
-            // Questions must be inserted AFTER quizzes — FK constraint on quiz_id.
-            seedQuestions(dao)
+            // ── PERFORMANCE FIX: withContext(Dispatchers.IO) ──────────────────
+            //
+            // Even though DatabaseModule sets setQueryExecutor(IO.asExecutor()),
+            // which means Room will call this callback from an IO thread in
+            // standard usage, we enforce IO explicitly here as a defensive
+            // measure. Reasons:
+            //
+            //   1. Room's callback threading is an implementation detail, not
+            //      a documented API contract. A future Room version could change
+            //      the calling thread.
+            //
+            //   2. Tests using `allowMainThreadQueries()` or in-memory builders
+            //      without a custom executor will call onCreate on the test's
+            //      calling thread — often the main thread.
+            //
+            //   3. The `withContext` switch is free when already on IO (the
+            //      dispatcher detects the current thread is in the IO pool and
+            //      does not reschedule). Cost is zero in production, safety is
+            //      guaranteed everywhere.
+            //
+            // Structure: seedQuizzes runs first and completes before seedQuestions
+            // starts. This is required — QuestionEntity has a FK constraint on
+            // quiz_id that Room enforces at the SQLite level when FK pragmas are
+            // active. Inserting questions before quizzes would violate the constraint.
+            withContext(Dispatchers.IO) {
+                val dao = daoProvider()  // Koin resolves AppDatabase singleton here
+
+                // ── Step 1: Parent rows first (FK constraint requirement) ──────
+                seedQuizzes(dao)
+
+                // ── Step 2: Child rows after parent rows are committed ─────────
+                seedQuestions(dao)
+            }
         }
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Seed functions
+    //
+    // Both are private suspend functions called from within withContext(IO),
+    // so SQLite access is always on a background thread.
+    //
+    // They are NOT individually wrapped in withContext — the caller's
+    // withContext block in onCreate already establishes the IO context for the
+    // entire seed sequence. Adding per-function withContext would create
+    // unnecessary context-switch overhead (each withContext is a coroutine
+    // dispatch point even when the context does not change).
+    // ─────────────────────────────────────────────────────────────────────────
 
     private suspend fun seedQuizzes(dao: QuizDao) {
         dao.insertQuizzes(
             listOf(
                 QuizEntity(
-                    id = 1L,
-                    title = "Nouns & Pronouns",
-                    description = "Master the building blocks of every sentence — " +
+                    id                 = 1L,
+                    title              = "Nouns & Pronouns",
+                    description        = "Master the building blocks of every sentence — " +
                             "common, proper, abstract nouns and the pronouns that replace them.",
                     totalTimeInMinutes = 8,
-                    difficulty = "EASY",
+                    difficulty         = "EASY",
                 ),
                 QuizEntity(
                     id                 = 2L,
@@ -96,16 +189,6 @@ class GrammarDatabaseCallback(
             )
         )
     }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Question seed data
-    //
-    // Naming convention for IDs:
-    //   Quiz 1 → questions  1– 4
-    //   Quiz 2 → questions  5– 8
-    //   Quiz 3 → questions  9–12
-    //   Quiz 4 → questions 13–16
-    // ─────────────────────────────────────────────────────────────────────────
 
     private suspend fun seedQuestions(dao: QuizDao) {
         dao.insertQuestions(
@@ -311,11 +394,11 @@ class GrammarDatabaseCallback(
                     correctAnswerIndex = 1,
                 ),
                 QuestionEntity(
-                    id = 16L,
-                    quizId = 4L,
-                    questionText = "What is the function of the relative clause in: " +
+                    id                 = 16L,
+                    quizId             = 4L,
+                    questionText       = "What is the function of the relative clause in: " +
                             "\"The book that you recommended changed my life\"?",
-                    options = listOf(
+                    options            = listOf(
                         "It acts as the subject of the sentence.",
                         "It modifies the noun 'book' by identifying which book is meant.",
                         "It provides additional, non-essential information about the book.",
