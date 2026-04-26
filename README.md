@@ -7,9 +7,9 @@ A lightweight, offline-first Android application for English grammar practice th
 ---
 ## Screenshots
 
-| Home Dashboard | Quiz Detail | Quiz Engine | Results |
-| :---: | :---: | :---: | :---: |
-| <img src="screenshots/home.png" width="220"/> | <img src="screenshots/detail.png" width="220"/> | <img src="screenshots/engine.png" width="220"/> | <img src="screenshots/results.png" width="220"/> |
+| Home Dashboard | Quiz Detail | Quiz Engine |                     Results                     |
+| :---: | :---: | :---: |:-----------------------------------------------:|
+| <img src="screenshots/home.png" width="220"/> | <img src="screenshots/detail.png" width="220"/> | <img src="screenshots/engine.png" width="220"/> | <img src="screenshots/result.png" width="220"/> |
 ## Tech Stack
 
 * **UI Toolkit:** Jetpack Compose with Lumo UI (high-contrast OLED backgrounds, squircle geometry).
