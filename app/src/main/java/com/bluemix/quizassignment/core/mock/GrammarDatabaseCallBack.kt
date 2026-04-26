@@ -18,55 +18,6 @@ import kotlinx.coroutines.withContext
  * [onCreate] fires exactly once — when Room creates the SQLite file for the
  * first time (fresh install or after the user clears app data).
  *
- * ── Threading contract ────────────────────────────────────────────────────────
- *
- * WHAT THREAD DOES ROOM CALL `onCreate` ON?
- *
- * Room calls [onCreate] (and [onOpen]) on the thread that is executing the
- * very first database operation — specifically, on the thread running inside
- * the executor that was given to `setQueryExecutor()` on the builder.
- *
- * In [DatabaseModule] we set `.setQueryExecutor(Dispatchers.IO.asExecutor())`,
- * so [onCreate] is always called on a [Dispatchers.IO] worker thread.
- *
- * HOWEVER — the threading guarantee changes between Room versions and between
- * "first open" scenarios:
- *
- *   • Standard first open  : Room calls `onCreate` on the query executor thread
- *                             (IO) before returning the connection to the caller.
- *   • Pre-packaged DB      : Room may call `onOpen` synchronously.
- *   • `allowMainThreadQueries()` builds: `onCreate` can fire on the main thread.
- *
- * Because we cannot guarantee the calling context across all Room versions and
- * configurations, the callback applies a DEFENSIVE `withContext(Dispatchers.IO)`
- * around every DAO write operation. This is belt-and-suspenders safety:
- *
- *   - If Room calls `onCreate` on IO (normal case) → `withContext(IO)` is a
- *     no-op context switch (the dispatcher sees the thread is already on IO and
- *     continues inline). Zero overhead.
- *   - If Room calls `onCreate` on an unexpected thread → `withContext(IO)`
- *     reschedules the work onto a proper IO thread, preventing any SQLite
- *     main-thread violation.
- *
- * ── Why `seedScope.launch` + `withContext(IO)` and not just `seedScope.launch(IO)` ─
- *
- * `seedScope.launch(Dispatchers.IO)` would set IO as the *initial* dispatcher
- * for the launched coroutine. That is sufficient for the direct DAO calls, but
- * it does not express the *intent* clearly — a future developer might remove
- * the dispatcher parameter thinking it's redundant because the scope already
- * uses IO. Using `withContext(Dispatchers.IO)` *inside* the seed functions
- * makes the IO guarantee explicit and local to the code that performs I/O:
- *
- *   seedScope.launch {           ← scope provides the lifetime (SupervisorJob)
- *       withContext(IO) {        ← this block explicitly requires IO
- *           dao.insertQuizzes()  ← SQLite write, must be on IO
- *       }
- *   }
- *
- * This also means if a future developer adds a CPU-only preprocessing step
- * before the DAO calls (e.g., JSON parsing), it can live outside `withContext`
- * and run on the scope's default dispatcher without unintentionally blocking IO.
- *
  * ── Idempotency ───────────────────────────────────────────────────────────────
  * All DAO inserts use [androidx.room.OnConflictStrategy.IGNORE]. Running the
  * seeder twice (e.g., in instrumented tests that don't clear the DB between
@@ -102,54 +53,13 @@ class GrammarDatabaseCallback(
         super.onCreate(db)
 
         seedScope.launch {
-            // ── PERFORMANCE FIX: withContext(Dispatchers.IO) ──────────────────
-            //
-            // Even though DatabaseModule sets setQueryExecutor(IO.asExecutor()),
-            // which means Room will call this callback from an IO thread in
-            // standard usage, we enforce IO explicitly here as a defensive
-            // measure. Reasons:
-            //
-            //   1. Room's callback threading is an implementation detail, not
-            //      a documented API contract. A future Room version could change
-            //      the calling thread.
-            //
-            //   2. Tests using `allowMainThreadQueries()` or in-memory builders
-            //      without a custom executor will call onCreate on the test's
-            //      calling thread — often the main thread.
-            //
-            //   3. The `withContext` switch is free when already on IO (the
-            //      dispatcher detects the current thread is in the IO pool and
-            //      does not reschedule). Cost is zero in production, safety is
-            //      guaranteed everywhere.
-            //
-            // Structure: seedQuizzes runs first and completes before seedQuestions
-            // starts. This is required — QuestionEntity has a FK constraint on
-            // quiz_id that Room enforces at the SQLite level when FK pragmas are
-            // active. Inserting questions before quizzes would violate the constraint.
             withContext(Dispatchers.IO) {
-                val dao = daoProvider()  // Koin resolves AppDatabase singleton here
-
-                // ── Step 1: Parent rows first (FK constraint requirement) ──────
+                val dao = daoProvider()
                 seedQuizzes(dao)
-
-                // ── Step 2: Child rows after parent rows are committed ─────────
                 seedQuestions(dao)
             }
         }
     }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Seed functions
-    //
-    // Both are private suspend functions called from within withContext(IO),
-    // so SQLite access is always on a background thread.
-    //
-    // They are NOT individually wrapped in withContext — the caller's
-    // withContext block in onCreate already establishes the IO context for the
-    // entire seed sequence. Adding per-function withContext would create
-    // unnecessary context-switch overhead (each withContext is a coroutine
-    // dispatch point even when the context does not change).
-    // ─────────────────────────────────────────────────────────────────────────
 
     private suspend fun seedQuizzes(dao: QuizDao) {
         dao.insertQuizzes(

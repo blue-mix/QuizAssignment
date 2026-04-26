@@ -28,37 +28,6 @@ import org.koin.core.logger.Level
  *   repositoryModule  →  QuizRepositoryImpl bound to QuizRepository interface
  *   domainModule      →  Use Cases (depend on QuizRepository interface only)
  *   viewModelModule   →  ViewModels (depend on Use Cases only)
- *
- * ── Logger level ──────────────────────────────────────────────────────────────
- * [Level.DEBUG] logs every Koin graph resolution to Logcat. This is invaluable
- * during development but should be gated behind [BuildConfig.DEBUG] before
- * shipping to production to avoid both the log noise and the minor performance
- * cost of Koin's reflection-based resolution logging.
- *
- * Production-safe alternative (recommended for release builds):
- *
- *   androidLogger(if (BuildConfig.DEBUG) Level.DEBUG else Level.ERROR)
- *
- * ── ⚠️ AndroidManifest.xml registration required ─────────────────────────────
- * This class will NOT be instantiated automatically — you must declare it in
- * `AndroidManifest.xml` as the `android:name` attribute of `<application>`:
- *
- *   <application
- *       android:name=".GrammarFlowApplication"
- *       android:label="@string/app_name"
- *       android:icon="@mipmap/ic_launcher"
- *       android:roundIcon="@mipmap/ic_launcher_round"
- *       android:supportsRtl="true"
- *       android:theme="@style/Theme.GrammarFlow"
- *       ... >
- *
- *       <activity android:name=".MainActivity" ... />
- *
- *   </application>
- *
- * Without this declaration the app will launch with the default [Application]
- * class and Koin will not be initialised, causing a crash on first ViewModel
- * injection.
  */
 class GrammarFlowApplication : Application() {
 

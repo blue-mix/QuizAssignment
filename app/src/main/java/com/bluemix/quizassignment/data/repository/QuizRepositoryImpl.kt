@@ -8,19 +8,6 @@ import com.bluemix.quizassignment.domain.repository.QuizRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
-/**
- * Concrete implementation of [QuizRepository].
- *
- * Lives in the Data layer. The Domain layer knows nothing about this class —
- * only about the [QuizRepository] interface it satisfies.
- *
- * Dependency injection (Hilt / Koin / manual) should provide a single instance
- * of this class bound to the [QuizRepository] interface.
- *
- * @param quizDao The Room DAO used to perform all database operations.
- *                Injected rather than created internally to keep this class
- *                testable: swap [QuizDao] for a fake in unit tests.
- */
 class QuizRepositoryImpl(
     private val quizDao: QuizDao,
 ) : QuizRepository {

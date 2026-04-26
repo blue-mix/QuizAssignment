@@ -8,7 +8,6 @@ import org.koin.androidx.viewmodel.dsl.viewModel
 import org.koin.androidx.viewmodel.dsl.viewModelOf
 import org.koin.dsl.module
 
-
 /**
  * Koin module: provides all Presentation layer ViewModels.
  *
@@ -36,42 +35,15 @@ import org.koin.dsl.module
  */
 val viewModelModule = module {
 
-    // ── SplashViewModel ───────────────────────────────────────────────────────
-    // No runtime args — viewModelOf resolves everything from the graph.
     viewModelOf(::SplashViewModel)
-
-    // ── HomeViewModel ─────────────────────────────────────────────────────────
-    // Requires GetAvailableQuizzesUseCase, resolved from domainModule.
     viewModelOf(::HomeViewModel)
 
-    // ── QuizDetailViewModel ───────────────────────────────────────────────────
-    //
-    // Runtime parameter:
-    //   params[0] → quizId: Long   (from Screen.QuizDetail route via parametersOf)
-    //
-    // Graph-resolved:
-    //   get()     → GetQuizByIdUseCase  (from domainModule)
-    //
-    // NavHost call:
-    //   koinViewModel(parameters = { parametersOf(route.quizId.toLong()) })
     viewModel { params ->
         QuizDetailViewModel(
             quizId = params[0],
             getQuizById = get(),
         )
     }
-
-    // ── QuizEngineViewModel ───────────────────────────────────────────────────
-    //
-    // Runtime parameters:
-    //   params[0] → quizId          : Long  (from Screen.QuizEngine route)
-    //   params[1] → timeInMinutes   : Int   (from Screen.QuizEngine route)
-    //
-    // Graph-resolved:
-    //   get()     → GetQuizQuestionsUseCase  (from domainModule)
-    //
-    // NavHost call:
-    //   koinViewModel(parameters = { parametersOf(route.quizId.toLong(), route.timeInMinutes) })
     viewModel { params ->
         QuizEngineViewModel(
             quizId = params[0],
